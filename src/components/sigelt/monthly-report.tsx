@@ -1,6 +1,10 @@
-import { InventoryAnalysis } from "@/components/sigelt/inventory-analysis";
 import { Copy, colors } from "@/components/sigelt/primitives";
-import { getMonthlyReport, type MonthlyReport } from "@/lib/reports";
+import { ReportCharts } from "@/components/sigelt/report-charts";
+import { ReportPdfButton } from "@/components/sigelt/report-pdf-button";
+import {
+  getVisualMonthlyReport,
+  type VisualMonthlyReport,
+} from "@/lib/visual-reports";
 import { useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, View } from "react-native";
 
@@ -62,7 +66,7 @@ function timestamp(value: string) {
 
 type Result = {
   key: string;
-  report: MonthlyReport | null;
+  report: VisualMonthlyReport | null;
   error: string;
 };
 
@@ -93,7 +97,7 @@ export function MonthlyReportPanel({ inventoryId }: { inventoryId: string }) {
       });
     }, 30000);
 
-    getMonthlyReport(month)
+    getVisualMonthlyReport(month)
       .then((data) => {
         if (!active) return;
 
@@ -182,6 +186,8 @@ export function MonthlyReportPanel({ inventoryId }: { inventoryId: string }) {
 
       {report && (
         <>
+          <ReportPdfButton key={requestKey} report={report} />
+
           <Copy style={s.note}>
             {report.period.is_current_month
               ? "Mes en curso · "
@@ -222,19 +228,31 @@ export function MonthlyReportPanel({ inventoryId }: { inventoryId: string }) {
             ))}
           </View>
 
+          <ReportCharts report={report} />
+
           <List
             title="Productos vendidos"
-            caption="Ordenados de mayor a menor cantidad. Importes al precio de cada venta; nombres y unidades del catálogo actual."
+            caption="Ordenados de mayor a menor importe vendido. Importes al precio de cada venta; nombres y unidades del catálogo actual."
             empty="No hay productos vendidos en este período."
-            rows={report.products_sold.map((p) => ({
-              id: p.product_id,
-              title:
-                p.name +
-                (p.current_status === "archived" ? " · Archivado" : ""),
-              detail:
-                p.code + " · " + number.format(p.quantity_sold) + " " + p.unit,
-              value: money.format(p.sales_amount),
-            }))}
+            rows={[...report.products_sold]
+              .sort(
+                (a, b) =>
+                  b.sales_amount - a.sales_amount ||
+                  a.code.localeCompare(b.code),
+              )
+              .map((p) => ({
+                id: p.product_id,
+                title:
+                  p.name +
+                  (p.current_status === "archived" ? " · Archivado" : ""),
+                detail:
+                  p.code +
+                  " · " +
+                  number.format(p.quantity_sold) +
+                  " " +
+                  p.unit,
+                value: money.format(p.sales_amount),
+              }))}
           />
 
           <List
@@ -278,19 +296,6 @@ export function MonthlyReportPanel({ inventoryId }: { inventoryId: string }) {
                   ? "Agotado"
                   : "Existencias bajas",
             }))}
-          />
-
-          <InventoryAnalysis
-            key={requestKey}
-            month={month}
-            inventoryId={inventoryId}
-            onReport={(updatedReport) =>
-              setResult({
-                key: requestKey,
-                report: updatedReport,
-                error: "",
-              })
-            }
           />
 
           <Copy style={s.note}>

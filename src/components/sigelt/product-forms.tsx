@@ -1,30 +1,25 @@
 import { Ionicons } from "@expo/vector-icons";
+import { useState, type ComponentProps, type ReactNode } from "react";
 import {
-    useEffect,
-    useState,
-    type ComponentProps,
-    type ReactNode,
-} from "react";
-import {
-    ActivityIndicator,
-    KeyboardAvoidingView,
-    Modal,
-    Platform,
-    Pressable,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    View,
-    useWindowDimensions,
+  ActivityIndicator,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+  useWindowDimensions,
 } from "react-native";
 
 import { colors } from "@/components/sigelt/primitives";
 import {
-    createProduct,
-    registerStockEntry,
-    updateProduct,
-    type Product,
+  createProduct,
+  registerStockEntry,
+  updateProduct,
+  type Product,
 } from "@/lib/products";
 
 type IconName = ComponentProps<typeof Ionicons>["name"];
@@ -233,7 +228,20 @@ function ModalActions({
   );
 }
 
-export function ProductCreateModal({
+export function ProductCreateModal(
+  props: ComponentProps<typeof ProductFormContent>,
+) {
+  if (!props.visible) return null;
+
+  return (
+    <ProductFormContent
+      key={props.inventoryId + ":" + (props.editingProduct?.id ?? "new")}
+      {...props}
+    />
+  );
+}
+
+function ProductFormContent({
   visible,
   inventoryId,
   editingProduct = null,
@@ -248,39 +256,22 @@ export function ProductCreateModal({
 }) {
   const { width } = useWindowDimensions();
   const twoColumns = width >= 560;
-  const [name, setName] = useState("");
-  const [code, setCode] = useState("");
-  const [category, setCategory] = useState("");
-  const [description, setDescription] = useState("");
-  const [unit, setUnit] = useState("unidad");
-  const [price, setPrice] = useState("");
-  const [minimum, setMinimum] = useState("5");
+
+  const [name, setName] = useState(editingProduct?.name ?? "");
+  const [code, setCode] = useState(editingProduct?.code ?? "");
+  const [category, setCategory] = useState(editingProduct?.category ?? "");
+  const [description, setDescription] = useState(
+    editingProduct?.description ?? "",
+  );
+  const [unit, setUnit] = useState(editingProduct?.unit ?? "unidad");
+  const [price, setPrice] = useState(
+    editingProduct ? String(editingProduct.sale_price) : "",
+  );
+  const [minimum, setMinimum] = useState(
+    editingProduct ? String(editingProduct.min_stock) : "5",
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-
-  useEffect(() => {
-    if (!visible) return;
-
-    if (editingProduct) {
-      setName(editingProduct.name);
-      setCode(editingProduct.code);
-      setCategory(editingProduct.category);
-      setDescription(editingProduct.description ?? "");
-      setUnit(editingProduct.unit);
-      setPrice(String(editingProduct.sale_price));
-      setMinimum(String(editingProduct.min_stock));
-    } else {
-      setName("");
-      setCode("");
-      setCategory("");
-      setDescription("");
-      setUnit("unidad");
-      setPrice("");
-      setMinimum("5");
-    }
-
-    setError("");
-  }, [visible, editingProduct]);
 
   async function submit() {
     if (busy) return;
@@ -472,7 +463,17 @@ export function ProductEditModal({
   );
 }
 
-export function StockEntryModal({
+export function StockEntryModal(
+  props: ComponentProps<typeof StockEntryContent>,
+) {
+  if (!props.visible) return null;
+
+  return (
+    <StockEntryContent key={props.preferredProductId ?? "choose"} {...props} />
+  );
+}
+
+function StockEntryContent({
   visible,
   products,
   preferredProductId,
@@ -485,22 +486,14 @@ export function StockEntryModal({
   onClose: () => void;
   onSaved: (productId: string, newStock: number) => void;
 }) {
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(
+    preferredProductId ?? products[0]?.id ?? null,
+  );
   const [productSearch, setProductSearch] = useState("");
   const [quantity, setQuantity] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-
-  useEffect(() => {
-    if (visible) {
-      setSelectedId(preferredProductId ?? products[0]?.id ?? null);
-      setProductSearch("");
-      setQuantity("");
-      setNote("");
-      setError("");
-    }
-  }, [visible, preferredProductId]);
 
   const selected = products.find((p) => p.id === selectedId) ?? null;
   const filtered = products.filter((p) =>

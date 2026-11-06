@@ -1,12 +1,11 @@
+import { InventoryIntelligencePanel } from "@/components/sigelt/inventory-intelligence";
 import { MonthlyReportPanel } from "@/components/sigelt/monthly-report";
 import { SalesCart } from "@/components/sigelt/sales-cart";
 import { Ionicons } from "@expo/vector-icons";
 import type { User } from "@supabase/supabase-js";
-import { Redirect } from "expo-router";
 import { useEffect, useState, type ComponentProps } from "react";
 import {
   ActivityIndicator,
-  KeyboardAvoidingView,
   Modal,
   Platform,
   Pressable,
@@ -17,20 +16,22 @@ import {
   View,
   useWindowDimensions,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 import { Brand, colors } from "@/components/sigelt/primitives";
 
+import { InventoryAccessGate } from "@/components/sigelt/inventory-access-gate";
+import { InventoryUsersPanel } from "@/components/sigelt/inventory-users-panel";
 import {
   ProductCreateModal,
   ProductEditModal,
   StockEntryModal,
   formatCOP,
 } from "@/components/sigelt/product-forms";
-import {
-  createMyInventory,
-  getMyInventory,
-  type Inventory,
-} from "@/lib/inventories";
+import type {
+  ActiveInventoryAccess,
+  InventoryRole,
+} from "@/lib/inventory-users";
 import {
   getProducts,
   getStockMovements,
@@ -56,7 +57,13 @@ const theme = {
   darkText: "#09110B",
 };
 
-type Section = "Inventario" | "Movimientos" | "Ventas" | "Informe mensual";
+type Section =
+  | "Inventario"
+  | "Movimientos"
+  | "Ventas"
+  | "Informe mensual"
+  | "Usuarios"
+  | "Inteligencia";
 
 type IconName = ComponentProps<typeof Ionicons>["name"];
 
@@ -68,6 +75,8 @@ const navigation: {
   { title: "Movimientos", icon: "swap-horizontal-outline" },
   { title: "Ventas", icon: "receipt-outline" },
   { title: "Informe mensual", icon: "stats-chart-outline" },
+  { title: "Inteligencia", icon: "sparkles-outline" },
+  { title: "Usuarios", icon: "people-outline" },
 ];
 
 // ======================================================
@@ -76,45 +85,53 @@ const navigation: {
 
 function Sidebar({
   active,
+  role,
   inventoryName,
   onNavigate,
 }: {
   active: Section;
+  role: InventoryRole;
   inventoryName: string | null;
   onNavigate: (section: Section) => void;
 }) {
   return (
     <View style={styles.sidebar}>
       <View>
-        <Text style={styles.sidebarLabel}>TU ESPACIO</Text>
+        <Text style={styles.sidebarLabel}>
+          {role === "admin" ? "ADMINISTRACIÓN" : "VENTAS"}
+        </Text>
 
-        {navigation.map((item) => {
-          const selected = active === item.title;
+        {navigation
+          .filter((item) => role === "admin" || item.title === "Ventas")
+          .map((item) => {
+            const selected = active === item.title;
 
-          return (
-            <Pressable
-              key={item.title}
-              accessibilityRole="button"
-              accessibilityState={{ selected }}
-              onPress={() => onNavigate(item.title)}
-              style={({ pressed }) => [
-                styles.navItem,
-                selected && styles.navItemActive,
-                pressed && { opacity: 0.75 },
-              ]}
-            >
-              <Ionicons
-                name={item.icon}
-                size={19}
-                color={selected ? theme.mint : theme.secondary}
-              />
+            return (
+              <Pressable
+                key={item.title}
+                accessibilityRole="button"
+                accessibilityState={{ selected }}
+                onPress={() => onNavigate(item.title)}
+                style={({ pressed }) => [
+                  styles.navItem,
+                  selected && styles.navItemActive,
+                  pressed && { opacity: 0.75 },
+                ]}
+              >
+                <Ionicons
+                  name={item.icon}
+                  size={19}
+                  color={selected ? theme.mint : theme.secondary}
+                />
 
-              <Text style={[styles.navText, selected && styles.navTextActive]}>
-                {item.title}
-              </Text>
-            </Pressable>
-          );
-        })}
+                <Text
+                  style={[styles.navText, selected && styles.navTextActive]}
+                >
+                  {item.title}
+                </Text>
+              </Pressable>
+            );
+          })}
       </View>
 
       <View style={styles.sidebarFooter}>
@@ -166,95 +183,44 @@ function StatCard({
 // PANTALLA PRINCIPAL
 // ======================================================
 
-function getMovementVisual(movement: {
-  movement_type: string;
-  quantity_change: number;
-}) {
-  const quantity = Number(movement.quantity_change ?? 0);
-
-  if (movement.movement_type === "sale") {
-    return {
-      label: "Venta",
-      icon: "arrow-up-outline",
-      iconColor: "#FFB4B4",
-      iconBackground: "#2B171A",
-      valueColor: "#FFB4B4",
-      prefix: "-",
-    };
-  }
-
-  if (movement.movement_type === "entry") {
-    return {
-      label: "Entrada",
-      icon: "arrow-down-outline",
-      iconColor: theme.mint,
-      iconBackground: "#173222",
-      valueColor: theme.mint,
-      prefix: "+",
-    };
-  }
-
-  if (movement.movement_type === "adjustment") {
-    if (quantity > 0) {
-      return {
-        label: "Ajuste positivo",
-        icon: "swap-up-outline",
-        iconColor: "#FFD37A",
-        iconBackground: "#2E2614",
-        valueColor: "#FFD37A",
-        prefix: "+",
-      };
-    }
-
-    return {
-      label: "Ajuste negativo",
-      icon: "swap-down-outline",
-      iconColor: "#FFB4B4",
-      iconBackground: "#2B171A",
-      valueColor: "#FFB4B4",
-      prefix: "-",
-    };
-  }
-
-  return {
-    label: "Movimiento",
-    icon: "help-circle-outline",
-    iconColor: theme.secondary,
-    iconBackground: theme.panel,
-    valueColor: theme.text,
-    prefix: quantity >= 0 ? "+" : "-",
-  };
+export default function InventarioScreen() {
+  return (
+    <InventoryAccessGate>
+      {(user, access) => (
+        <InventoryWorkspace
+          key={user.id + ":" + access.inventory_id + ":" + access.role}
+          user={user}
+          access={access}
+        />
+      )}
+    </InventoryAccessGate>
+  );
 }
 
-export default function InventarioScreen() {
+function InventoryWorkspace({
+  user,
+  access,
+}: {
+  user: User;
+  access: ActiveInventoryAccess;
+}) {
+  const isAdmin = access.role === "admin";
+  const inventory = { id: access.inventory_id, name: access.inventory_name };
+  const inventoryName = inventory.name;
   const { width } = useWindowDimensions();
   const isDesktop = width >= 850;
 
-  const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
-  const [section, setSection] = useState<Section>("Inventario");
+  const [section, setSection] = useState<Section>(
+    isAdmin ? "Inventario" : "Ventas",
+  );
   const [menuOpen, setMenuOpen] = useState(false);
-
-  // Inventario real de Supabase (fases 2 y 3).
-  const [inventory, setInventory] = useState<Inventory | null>(null);
-
-  const inventoryName = inventory?.name ?? null;
-
-  const [inventoryLoading, setInventoryLoading] = useState(true);
-  const [inventoryError, setInventoryError] = useState("");
-  const [creatingInventory, setCreatingInventory] = useState(false);
-  const [reloadInventory, setReloadInventory] = useState(0);
-
-  const [createModalOpen, setCreateModalOpen] = useState(false);
-  const [newInventoryName, setNewInventoryName] = useState("");
-  const [createError, setCreateError] = useState("");
 
   // Productos reales, inventario y entradas.
   const [products, setProducts] = useState<Product[]>([]);
-  const [productsLoading, setProductsLoading] = useState(false);
+  const [productsLoading, setProductsLoading] = useState(true);
   const [productsError, setProductsError] = useState("");
   const [productsReload, setProductsReload] = useState(0);
   const [movements, setMovements] = useState<StockMovement[]>([]);
@@ -288,107 +254,23 @@ export default function InventarioScreen() {
     return matchesText && matchesStock;
   });
 
-  // ------------------------------------------------------
-  // AUTENTICACIÓN
-  // ------------------------------------------------------
-
-  useEffect(() => {
-    let mounted = true;
-
-    const { data: authListener } = supabase.auth.onAuthStateChange(
-      (_event, session) => {
-        if (!mounted) return;
-
-        setUser(session?.user ?? null);
-        setLoading(false);
-      },
-    );
-
-    void supabase.auth
-      .getSession()
-      .then(({ data }) => {
-        if (!mounted) return;
-
-        setUser(data.session?.user ?? null);
-        setLoading(false);
-      })
-      .catch(() => {
-        if (!mounted) return;
-
-        setError("No se pudo verificar la sesión.");
-        setLoading(false);
-      });
-
-    return () => {
-      mounted = false;
-      authListener.subscription.unsubscribe();
-    };
-  }, []);
-
-  useEffect(() => {
-    let active = true;
-
-    if (!user?.id) {
-      setInventory(null);
-      setInventoryLoading(true);
-      setInventoryError("");
-      return () => {
-        active = false;
-      };
-    }
-
-    setInventory(null);
-    setInventoryLoading(true);
-    setInventoryError("");
-
-    async function loadInventory() {
-      try {
-        const data = await getMyInventory();
-
-        if (active) {
-          setInventory(data);
-        }
-      } catch (error) {
-        console.error("Error cargando inventario:", error);
-
-        if (active) {
-          setInventoryError("No se pudo cargar tu inventario.");
-        }
-      } finally {
-        if (active) {
-          setInventoryLoading(false);
-        }
-      }
-    }
-
-    void loadInventory();
-
-    return () => {
-      active = false;
-    };
-  }, [user?.id, reloadInventory]);
-
   // Consultar catálogo del inventario autenticado.
   useEffect(() => {
     let alive = true;
-    setProducts([]);
-    setProductsError("");
 
-    if (!inventory?.id) {
-      setProductsLoading(false);
-      return () => {
-        alive = false;
-      };
-    }
-
-    setProductsLoading(true);
     void getProducts(inventory.id)
       .then((data) => {
-        if (alive) setProducts(data);
+        if (alive) {
+          setProducts(data);
+          setProductsError("");
+        }
       })
       .catch((err) => {
         console.error("Error cargando productos:", err);
-        if (alive) setProductsError("No se pudieron cargar los productos.");
+        if (alive) {
+          setProducts([]);
+          setProductsError("No se pudieron cargar los productos.");
+        }
       })
       .finally(() => {
         if (alive) setProductsLoading(false);
@@ -401,16 +283,17 @@ export default function InventarioScreen() {
 
   useEffect(() => {
     let alive = true;
-    setMovements([]);
-    setMovementsError("");
-    if (!inventory?.id)
+    if (!inventory.id || !isAdmin)
       return () => {
         alive = false;
       };
 
     void getStockMovements(inventory.id)
       .then((rows) => {
-        if (alive) setMovements(rows);
+        if (alive) {
+          setMovements(rows);
+          setMovementsError("");
+        }
       })
       .catch((err) => {
         console.error("Error cargando movimientos:", err);
@@ -421,10 +304,10 @@ export default function InventarioScreen() {
     return () => {
       alive = false;
     };
-  }, [inventory?.id, movementsReload]);
+  }, [inventory.id, movementsReload, isAdmin]);
 
   function openStockEntry(productId: string | null = null) {
-    if (products.length === 0) return;
+    if (!isAdmin || products.length === 0) return;
     setPreferredEntryId(productId);
     setEntryModalOpen(true);
   }
@@ -458,6 +341,7 @@ export default function InventarioScreen() {
     setEntryModalOpen(false);
     setPreferredEntryId(null);
     // Lectura fresca para reflejar también operaciones desde otra sesión.
+    setProductsLoading(true);
     setProductsReload((n) => n + 1);
     setMovementsReload((n) => n + 1);
   }
@@ -492,147 +376,9 @@ export default function InventarioScreen() {
   // ------------------------------------------------------
 
   function navigateTo(nextSection: Section) {
+    if (!isAdmin && nextSection !== "Ventas") return;
     setSection(nextSection);
     setMenuOpen(false);
-  }
-
-  // ------------------------------------------------------
-  // CREACIÓN DEL INVENTARIO EN SUPABASE
-  // ------------------------------------------------------
-
-  function openCreateModal() {
-    setNewInventoryName("");
-    setCreateError("");
-    setCreateModalOpen(true);
-  }
-
-  function closeCreateModal() {
-    if (creatingInventory) return;
-    setCreateModalOpen(false);
-    setCreateError("");
-  }
-
-  async function createInventory() {
-    if (creatingInventory) return;
-
-    const name = newInventoryName.trim();
-
-    if (name.length < 3 || name.length > 60) {
-      setCreateError("El nombre debe tener entre 3 y 60 caracteres.");
-      return;
-    }
-
-    if (!user) {
-      setCreateError("Tu sesión terminó. Vuelve a iniciar sesión.");
-      return;
-    }
-
-    setCreatingInventory(true);
-    setCreateError("");
-
-    try {
-      const savedInventory = await createMyInventory(name);
-
-      setInventory(savedInventory);
-      setCreateModalOpen(false);
-      setNewInventoryName("");
-      setCreateError("");
-      setSection("Inventario");
-    } catch (error: unknown) {
-      console.error("Error creando inventario:", error);
-
-      const code =
-        error && typeof error === "object" && "code" in error
-          ? String(error.code)
-          : "";
-
-      if (code === "23505") {
-        // Si ya existía por otro intento, tratamos de recuperarlo.
-        // Evita dejar al usuario bloqueado ante un doble envío.
-        try {
-          const existingInventory = await getMyInventory();
-          if (existingInventory) {
-            setInventory(existingInventory);
-            setCreateModalOpen(false);
-            setNewInventoryName("");
-            setCreateError("");
-            setSection("Inventario");
-            return;
-          }
-        } catch (fetchError) {
-          console.error("Error recuperando inventario:", fetchError);
-        }
-
-        setCreateError(
-          "Ya tienes un inventario asociado a esta cuenta. Intenta recargar la página.",
-        );
-      } else {
-        setCreateError(
-          "No se pudo guardar el inventario. Comprueba tu conexión e inténtalo nuevamente.",
-        );
-      }
-    } finally {
-      setCreatingInventory(false);
-    }
-  }
-
-  // ------------------------------------------------------
-  // VERIFICACIÓN DE SESIÓN
-  // ------------------------------------------------------
-
-  if (loading) {
-    return (
-      <View style={styles.loading}>
-        <ActivityIndicator size="large" color={theme.mint} />
-      </View>
-    );
-  }
-
-  if (!user) {
-    return <Redirect href="/auth" />;
-  }
-
-  if (inventoryLoading) {
-    return (
-      <View style={styles.loading}>
-        <ActivityIndicator size="large" color={theme.mint} />
-      </View>
-    );
-  }
-
-  if (inventoryError) {
-    return (
-      <View style={[styles.loading, { padding: 24 }]}>
-        <Text
-          style={{
-            color: theme.text,
-            textAlign: "center",
-            marginBottom: 15,
-          }}
-        >
-          {inventoryError}
-        </Text>
-
-        <Pressable
-          accessibilityRole="button"
-          onPress={() => setReloadInventory((n) => n + 1)}
-          style={styles.retryButton}
-        >
-          <Text style={{ color: theme.mint }}>Reintentar</Text>
-        </Pressable>
-
-        <Pressable
-          accessibilityRole="button"
-          disabled={busy}
-          onPress={() => void logout()}
-          style={styles.retryButton}
-        >
-          <Text style={{ color: theme.secondary }}>
-            {busy ? "Cerrando..." : "Cerrar sesión"}
-          </Text>
-        </Pressable>
-      </View>
-    );
   }
 
   // ======================================================
@@ -673,7 +419,9 @@ export default function InventarioScreen() {
           {isDesktop && (
             <View style={styles.phaseBadge}>
               <View style={styles.statusDot} />
-              <Text style={styles.phaseText}>Sigelt · Inventario</Text>
+              <Text style={styles.phaseText}>
+                {isAdmin ? "Administrador" : "Vendedor"}
+              </Text>
             </View>
           )}
 
@@ -714,6 +462,7 @@ export default function InventarioScreen() {
           <View style={styles.desktopSidebar}>
             <Sidebar
               active={section}
+              role={access.role}
               inventoryName={inventoryName}
               onNavigate={navigateTo}
             />
@@ -728,6 +477,7 @@ export default function InventarioScreen() {
             styles.mainScrollContent,
             isDesktop ? styles.mainDesktop : styles.mainMobile,
           ]}
+          automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
           keyboardShouldPersistTaps="handled"
         >
           <View style={styles.mainInner}>
@@ -746,366 +496,299 @@ export default function InventarioScreen() {
             {/* SECCIÓN INVENTARIO */}
             {/* ===================================== */}
 
-            {section === "Inventario" && (
+            {isAdmin && section === "Inventario" && (
               <>
-                {!inventoryName ? (
-                  // ---------------------------------
-                  // ESTADO INICIAL: SIN INVENTARIO
-                  // ---------------------------------
+                <>
+                  <View style={styles.inventoryHeading}>
+                    <View style={styles.headingTextContainer}>
+                      <Text style={styles.pageTitle}>Todo en su lugar.</Text>
 
-                  <>
-                    <View style={styles.pageHeading}>
-                      <Text style={styles.pageTitle}>
-                        Tu inventario comienza aquí.
-                      </Text>
+                      <Text style={styles.pageSubtitle}>{inventoryName}</Text>
 
-                      <Text style={styles.pageSubtitle}>
-                        Crea un espacio para organizar tus productos y comenzar
-                        a trabajar con Sigelt.
+                      <Text style={styles.smallHint}>
+                        Tu espacio está preparado para gestionar productos.
                       </Text>
                     </View>
 
-                    <View style={styles.welcomeCard}>
-                      <View style={styles.welcomeIcon}>
+                    <View style={styles.headingIcon}>
+                      <Ionicons
+                        name="cube-outline"
+                        size={26}
+                        color={theme.mint}
+                      />
+                    </View>
+                  </View>
+
+                  {/* INDICADORES */}
+
+                  <View style={styles.statsGrid}>
+                    <StatCard
+                      label="Productos"
+                      value={String(productCount)}
+                      description="En el catálogo"
+                      icon="cube-outline"
+                    />
+
+                    <StatCard
+                      label="Existencias"
+                      value={String(totalStock)}
+                      description="Unidades disponibles"
+                      icon="layers-outline"
+                    />
+
+                    <StatCard
+                      label="Existencias bajas"
+                      value={String(lowStock)}
+                      description="Por revisar"
+                      icon="alert-circle-outline"
+                    />
+
+                    <StatCard
+                      label="Agotados"
+                      value={String(outOfStock)}
+                      description="Sin unidades"
+                      icon="close-circle-outline"
+                    />
+                  </View>
+
+                  {/* ACCIONES DEL INVENTARIO */}
+
+                  <View style={styles.inventoryToolbar}>
+                    <View style={styles.searchBox}>
+                      <Ionicons
+                        name="search-outline"
+                        size={20}
+                        color={theme.muted}
+                      />
+
+                      <TextInput
+                        value={search}
+                        onChangeText={setSearch}
+                        placeholder="Buscar por nombre, código o categoría..."
+                        placeholderTextColor={theme.muted}
+                        style={styles.searchInput}
+                        accessibilityLabel="Buscar productos"
+                      />
+                    </View>
+
+                    <View style={styles.toolbarActions}>
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityState={{ disabled: productCount === 0 }}
+                        disabled={productCount === 0}
+                        onPress={() => openStockEntry()}
+                        style={({ pressed }) => [
+                          styles.actionOutline,
+                          (pressed || productCount === 0) && {
+                            opacity: 0.55,
+                          },
+                        ]}
+                      >
                         <Ionicons
-                          name="cube-outline"
-                          size={34}
-                          color={theme.mint}
+                          name="download-outline"
+                          size={18}
+                          color={theme.secondary}
                         />
-                      </View>
-
-                      <Text style={styles.welcomeTitle}>
-                        Dale un lugar a tus productos.
-                      </Text>
-
-                      <Text style={styles.welcomeDescription}>
-                        Crea tu primer inventario y prepara el espacio donde
-                        podrás gestionar productos, entradas, ventas e informes.
-                      </Text>
+                        <Text style={styles.actionOutlineText}>
+                          Registrar entrada
+                        </Text>
+                      </Pressable>
 
                       <Pressable
                         accessibilityRole="button"
-                        onPress={openCreateModal}
+                        onPress={() => setProductModalOpen(true)}
                         style={({ pressed }) => [
-                          styles.primaryButton,
-                          pressed && { opacity: 0.8 },
+                          styles.actionPrimary,
+                          pressed && { opacity: 0.78 },
                         ]}
                       >
                         <Ionicons
                           name="add-outline"
-                          size={22}
+                          size={20}
                           color={theme.darkText}
                         />
-
-                        <Text style={styles.primaryButtonText}>
-                          Crear mi inventario
+                        <Text style={styles.actionPrimaryText}>
+                          Nuevo producto
                         </Text>
                       </Pressable>
-
-                      <Text style={styles.welcomeNote}>
-                        Comenzaremos con un inventario vacío.
-                      </Text>
                     </View>
-                  </>
-                ) : (
-                  // ---------------------------------
-                  // INVENTARIO REAL: PRODUCTOS Y ENTRADAS
-                  // ---------------------------------
+                  </View>
 
-                  <>
-                    <View style={styles.inventoryHeading}>
-                      <View style={styles.headingTextContainer}>
-                        <Text style={styles.pageTitle}>Todo en su lugar.</Text>
+                  {/* FILTROS DE EXISTENCIAS */}
+                  <View style={styles.stockFilters}>
+                    {(
+                      [
+                        ["all", "Todos"],
+                        ["low", `Por reponer (${lowStock})`],
+                        ["out", `Agotados (${outOfStock})`],
+                      ] as const
+                    ).map(([filter, label]) => (
+                      <Pressable
+                        key={filter}
+                        accessibilityRole="button"
+                        accessibilityState={{
+                          selected: stockFilter === filter,
+                        }}
+                        onPress={() => setStockFilter(filter)}
+                        style={[
+                          styles.filterPill,
+                          stockFilter === filter && styles.filterPillActive,
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.filterPillText,
+                            stockFilter === filter &&
+                              styles.filterPillTextActive,
+                          ]}
+                        >
+                          {label}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </View>
 
-                        <Text style={styles.pageSubtitle}>{inventoryName}</Text>
+                  {/* LISTADO DE PRODUCTOS */}
+                  <View style={styles.productPanel}>
+                    {isDesktop && (
+                      <View style={styles.tableHeader}>
+                        <Text style={styles.columnProduct}>PRODUCTO</Text>
+                        <Text style={styles.columnPrice}>PRECIO / UND.</Text>
+                        <Text style={styles.columnStock}>EXISTENCIAS</Text>
+                      </View>
+                    )}
 
-                        <Text style={styles.smallHint}>
-                          Tu espacio está preparado para gestionar productos.
+                    {productsLoading ? (
+                      <View style={styles.emptyProducts}>
+                        <ActivityIndicator color={theme.mint} />
+                        <Text style={styles.emptyDescription}>
+                          Cargando productos...
                         </Text>
                       </View>
-
-                      <View style={styles.headingIcon}>
+                    ) : productsError ? (
+                      <View style={styles.emptyProducts}>
                         <Ionicons
-                          name="cube-outline"
-                          size={26}
-                          color={theme.mint}
+                          name="alert-circle-outline"
+                          size={28}
+                          color="#FFAAAA"
                         />
-                      </View>
-                    </View>
-
-                    {/* INDICADORES */}
-
-                    <View style={styles.statsGrid}>
-                      <StatCard
-                        label="Productos"
-                        value={String(productCount)}
-                        description="En el catálogo"
-                        icon="cube-outline"
-                      />
-
-                      <StatCard
-                        label="Existencias"
-                        value={String(totalStock)}
-                        description="Unidades disponibles"
-                        icon="layers-outline"
-                      />
-
-                      <StatCard
-                        label="Existencias bajas"
-                        value={String(lowStock)}
-                        description="Por revisar"
-                        icon="alert-circle-outline"
-                      />
-
-                      <StatCard
-                        label="Agotados"
-                        value={String(outOfStock)}
-                        description="Sin unidades"
-                        icon="close-circle-outline"
-                      />
-                    </View>
-
-                    {/* ACCIONES DEL INVENTARIO */}
-
-                    <View style={styles.inventoryToolbar}>
-                      <View style={styles.searchBox}>
-                        <Ionicons
-                          name="search-outline"
-                          size={20}
-                          color={theme.muted}
-                        />
-
-                        <TextInput
-                          value={search}
-                          onChangeText={setSearch}
-                          placeholder="Buscar por nombre, código o categoría..."
-                          placeholderTextColor={theme.muted}
-                          style={styles.searchInput}
-                          accessibilityLabel="Buscar productos"
-                        />
-                      </View>
-
-                      <View style={styles.toolbarActions}>
+                        <Text style={styles.emptyDescription}>
+                          {productsError}
+                        </Text>
                         <Pressable
-                          accessibilityRole="button"
-                          accessibilityState={{ disabled: productCount === 0 }}
-                          disabled={productCount === 0}
-                          onPress={() => openStockEntry()}
-                          style={({ pressed }) => [
-                            styles.actionOutline,
-                            (pressed || productCount === 0) && {
-                              opacity: 0.55,
-                            },
-                          ]}
+                          onPress={() => setProductsReload((n) => n + 1)}
+                          style={styles.retryButton}
                         >
+                          <Text style={{ color: theme.mint }}>Reintentar</Text>
+                        </Pressable>
+                      </View>
+                    ) : visibleProducts.length === 0 ? (
+                      <View style={styles.emptyProducts}>
+                        <View style={styles.emptyIcon}>
                           <Ionicons
-                            name="download-outline"
-                            size={18}
+                            name="file-tray-outline"
+                            size={30}
                             color={theme.secondary}
                           />
-                          <Text style={styles.actionOutlineText}>
-                            Registrar entrada
-                          </Text>
-                        </Pressable>
-
-                        <Pressable
-                          accessibilityRole="button"
-                          onPress={() => setProductModalOpen(true)}
-                          style={({ pressed }) => [
-                            styles.actionPrimary,
-                            pressed && { opacity: 0.78 },
-                          ]}
-                        >
-                          <Ionicons
-                            name="add-outline"
-                            size={20}
-                            color={theme.darkText}
-                          />
-                          <Text style={styles.actionPrimaryText}>
-                            Nuevo producto
-                          </Text>
-                        </Pressable>
+                        </View>
+                        <Text style={styles.emptyTitle}>
+                          {productCount === 0
+                            ? "Todavía no hay productos."
+                            : "No encontramos productos."}
+                        </Text>
+                        <Text style={styles.emptyDescription}>
+                          {productCount === 0
+                            ? "Pulsa «Nuevo producto» para agregar tu primer artículo al catálogo."
+                            : "Prueba otra búsqueda o cambia el filtro."}
+                        </Text>
                       </View>
-                    </View>
-
-                    {/* FILTROS DE EXISTENCIAS */}
-                    <View style={styles.stockFilters}>
-                      {(
-                        [
-                          ["all", "Todos"],
-                          ["low", `Por reponer (${lowStock})`],
-                          ["out", `Agotados (${outOfStock})`],
-                        ] as const
-                      ).map(([filter, label]) => (
-                        <Pressable
-                          key={filter}
-                          accessibilityRole="button"
-                          accessibilityState={{
-                            selected: stockFilter === filter,
-                          }}
-                          onPress={() => setStockFilter(filter)}
-                          style={[
-                            styles.filterPill,
-                            stockFilter === filter && styles.filterPillActive,
-                          ]}
-                        >
-                          <Text
-                            style={[
-                              styles.filterPillText,
-                              stockFilter === filter &&
-                                styles.filterPillTextActive,
+                    ) : (
+                      visibleProducts.map((product) => {
+                        const out = product.stock_quantity === 0;
+                        const low =
+                          !out && product.stock_quantity <= product.min_stock;
+                        return (
+                          <Pressable
+                            key={product.id}
+                            onPress={() => setSelectedProduct(product)}
+                            accessibilityRole="button"
+                            accessibilityLabel={`Ver detalles de ${product.name}`}
+                            style={({ pressed }) => [
+                              styles.productRow,
+                              !isDesktop && styles.productRowMobile,
+                              pressed && styles.productRowPressed,
                             ]}
                           >
-                            {label}
-                          </Text>
-                        </Pressable>
-                      ))}
-                    </View>
-
-                    {/* LISTADO DE PRODUCTOS */}
-                    <View style={styles.productPanel}>
-                      {isDesktop && (
-                        <View style={styles.tableHeader}>
-                          <Text style={styles.columnProduct}>PRODUCTO</Text>
-                          <Text style={styles.columnPrice}>PRECIO / UND.</Text>
-                          <Text style={styles.columnStock}>EXISTENCIAS</Text>
-                        </View>
-                      )}
-
-                      {productsLoading ? (
-                        <View style={styles.emptyProducts}>
-                          <ActivityIndicator color={theme.mint} />
-                          <Text style={styles.emptyDescription}>
-                            Cargando productos...
-                          </Text>
-                        </View>
-                      ) : productsError ? (
-                        <View style={styles.emptyProducts}>
-                          <Ionicons
-                            name="alert-circle-outline"
-                            size={28}
-                            color="#FFAAAA"
-                          />
-                          <Text style={styles.emptyDescription}>
-                            {productsError}
-                          </Text>
-                          <Pressable
-                            onPress={() => setProductsReload((n) => n + 1)}
-                            style={styles.retryButton}
-                          >
-                            <Text style={{ color: theme.mint }}>
-                              Reintentar
-                            </Text>
-                          </Pressable>
-                        </View>
-                      ) : visibleProducts.length === 0 ? (
-                        <View style={styles.emptyProducts}>
-                          <View style={styles.emptyIcon}>
-                            <Ionicons
-                              name="file-tray-outline"
-                              size={30}
-                              color={theme.secondary}
-                            />
-                          </View>
-                          <Text style={styles.emptyTitle}>
-                            {productCount === 0
-                              ? "Todavía no hay productos."
-                              : "No encontramos productos."}
-                          </Text>
-                          <Text style={styles.emptyDescription}>
-                            {productCount === 0
-                              ? "Pulsa «Nuevo producto» para agregar tu primer artículo al catálogo."
-                              : "Prueba otra búsqueda o cambia el filtro."}
-                          </Text>
-                        </View>
-                      ) : (
-                        visibleProducts.map((product) => {
-                          const out = product.stock_quantity === 0;
-                          const low =
-                            !out && product.stock_quantity <= product.min_stock;
-                          return (
-                            <Pressable
-                              key={product.id}
-                              onPress={() => setSelectedProduct(product)}
-                              accessibilityRole="button"
-                              accessibilityLabel={`Ver detalles de ${product.name}`}
-                              style={({ pressed }) => [
-                                styles.productRow,
-                                !isDesktop && styles.productRowMobile,
-                                pressed && styles.productRowPressed,
+                            <View
+                              style={[
+                                styles.productMain,
+                                !isDesktop && styles.productMainMobile,
                               ]}
                             >
-                              <View
-                                style={[
-                                  styles.productMain,
-                                  !isDesktop && styles.productMainMobile,
-                                ]}
-                              >
-                                <View style={styles.productSymbol}>
-                                  <Ionicons
-                                    name="cube-outline"
-                                    size={20}
-                                    color={theme.secondary}
-                                  />
-                                </View>
-                                <View style={styles.productTextWrap}>
-                                  <Text
-                                    style={styles.productName}
-                                    numberOfLines={1}
-                                  >
-                                    {product.name}
-                                  </Text>
-                                  <Text
-                                    style={styles.productMeta}
-                                    numberOfLines={2}
-                                  >
-                                    {product.code} · {product.category} ·{" "}
-                                    {product.unit}
-                                  </Text>
-                                </View>
+                              <View style={styles.productSymbol}>
+                                <Ionicons
+                                  name="cube-outline"
+                                  size={20}
+                                  color={theme.secondary}
+                                />
                               </View>
-                              <View
-                                style={
-                                  !isDesktop
-                                    ? styles.mobileStockLine
-                                    : styles.desktopValues
-                                }
-                              >
-                                <View style={styles.priceColumn}>
-                                  <Text style={styles.productPrice}>
-                                    {formatCOP(product.sale_price)}
-                                  </Text>
-                                </View>
-                                <View style={styles.stockColumn}>
-                                  <Text style={styles.stockNumber}>
-                                    {product.stock_quantity} und.
-                                  </Text>
-                                  {(out || low) && (
-                                    <Text
-                                      style={[
-                                        styles.stockStatus,
-                                        out && styles.stockStatusOut,
-                                      ]}
-                                    >
-                                      {out ? "Agotado" : "Por reponer"}
-                                    </Text>
-                                  )}
-                                  <Text style={styles.stockAction}>
-                                    Ver detalles
-                                  </Text>
-                                </View>
+                              <View style={styles.productTextWrap}>
+                                <Text
+                                  style={styles.productName}
+                                  numberOfLines={1}
+                                >
+                                  {product.name}
+                                </Text>
+                                <Text
+                                  style={styles.productMeta}
+                                  numberOfLines={2}
+                                >
+                                  {product.code} · {product.category} ·{" "}
+                                  {product.unit}
+                                </Text>
                               </View>
-                            </Pressable>
-                          );
-                        })
-                      )}
-                    </View>
-                    <Text style={styles.inventoryFooter}>
-                      {visibleProducts.length} de {productCount} productos ·{" "}
-                      {totalStock} unidades
-                    </Text>
-                  </>
-                )}
+                            </View>
+                            <View
+                              style={
+                                !isDesktop
+                                  ? styles.mobileStockLine
+                                  : styles.desktopValues
+                              }
+                            >
+                              <View style={styles.priceColumn}>
+                                <Text style={styles.productPrice}>
+                                  {formatCOP(product.sale_price)}
+                                </Text>
+                              </View>
+                              <View style={styles.stockColumn}>
+                                <Text style={styles.stockNumber}>
+                                  {product.stock_quantity} und.
+                                </Text>
+                                {(out || low) && (
+                                  <Text
+                                    style={[
+                                      styles.stockStatus,
+                                      out && styles.stockStatusOut,
+                                    ]}
+                                  >
+                                    {out ? "Agotado" : "Por reponer"}
+                                  </Text>
+                                )}
+                                <Text style={styles.stockAction}>
+                                  Ver detalles
+                                </Text>
+                              </View>
+                            </View>
+                          </Pressable>
+                        );
+                      })
+                    )}
+                  </View>
+                  <Text style={styles.inventoryFooter}>
+                    {visibleProducts.length} de {productCount} productos ·{" "}
+                    {totalStock} unidades
+                  </Text>
+                </>
               </>
             )}
 
@@ -1113,7 +796,7 @@ export default function InventarioScreen() {
             {/* HISTORIAL REAL DE ENTRADAS */}
             {/* ===================================== */}
 
-            {section === "Movimientos" && (
+            {isAdmin && section === "Movimientos" && (
               <>
                 <View style={styles.pageHeading}>
                   <Text style={styles.pageTitle}>Movimientos</Text>
@@ -1199,12 +882,27 @@ export default function InventarioScreen() {
             {/* VENTAS - CARRITO DE COMPRAS */}
             {/* ===================================== */}
 
+            {section === "Ventas" && !!productsError && (
+              <View style={styles.errorBanner}>
+                <Text accessibilityRole="alert" style={styles.errorText}>
+                  {productsError}
+                </Text>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => setProductsReload((n) => n + 1)}
+                  style={styles.retryButton}
+                >
+                  <Text style={{ color: theme.mint }}>Reintentar</Text>
+                </Pressable>
+              </View>
+            )}
             {section === "Ventas" && inventory && (
               <SalesCart
                 inventoryId={inventory.id}
                 products={products}
                 loading={productsLoading}
                 onSaleConfirmed={() => {
+                  setProductsLoading(true);
                   setProductsReload((n) => n + 1);
                   setMovementsReload((n) => n + 1);
                 }}
@@ -1215,7 +913,15 @@ export default function InventarioScreen() {
             {/* OTRAS SECCIONES: NAVEGACIÓN VISUAL */}
             {/* ===================================== */}
 
-            {section === "Informe mensual" && inventory && (
+            {isAdmin && section === "Usuarios" && (
+              <InventoryUsersPanel currentUserId={user.id} />
+            )}
+
+            {isAdmin && section === "Inteligencia" && (
+              <InventoryIntelligencePanel />
+            )}
+
+            {isAdmin && section === "Informe mensual" && inventory && (
               <MonthlyReportPanel
                 key={inventory.id}
                 inventoryId={inventory.id}
@@ -1235,7 +941,12 @@ export default function InventarioScreen() {
         animationType="fade"
         onRequestClose={() => setMenuOpen(false)}
       >
-        <View style={styles.drawerLayout}>
+        <SafeAreaView
+          edges={
+            Platform.OS === "web" ? [] : ["top", "bottom", "left", "right"]
+          }
+          style={styles.drawerLayout}
+        >
           <View style={styles.drawerPanel}>
             <View style={styles.drawerHeader}>
               <Text style={styles.drawerTitle}>Menú</Text>
@@ -1252,6 +963,7 @@ export default function InventarioScreen() {
 
             <Sidebar
               active={section}
+              role={access.role}
               inventoryName={inventoryName}
               onNavigate={navigateTo}
             />
@@ -1263,120 +975,13 @@ export default function InventarioScreen() {
             onPress={() => setMenuOpen(false)}
             style={styles.drawerBackdrop}
           />
-        </View>
-      </Modal>
-
-      {/* ============================================= */}
-      {/* MODAL CREAR INVENTARIO */}
-      {/* ============================================= */}
-
-      <Modal
-        visible={createModalOpen}
-        transparent
-        animationType="fade"
-        onRequestClose={closeCreateModal}
-      >
-        <KeyboardAvoidingView
-          behavior={Platform.OS === "ios" ? "padding" : undefined}
-          style={styles.modalOverlay}
-        >
-          <View style={styles.modalCard}>
-            <View style={styles.modalHeader}>
-              <View style={styles.modalIcon}>
-                <Ionicons name="cube-outline" size={24} color={theme.mint} />
-              </View>
-
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Cerrar formulario"
-                onPress={closeCreateModal}
-                disabled={creatingInventory}
-                accessibilityState={{ disabled: creatingInventory }}
-                style={styles.iconButton}
-              >
-                <Ionicons
-                  name="close-outline"
-                  size={23}
-                  color={theme.secondary}
-                />
-              </Pressable>
-            </View>
-
-            <Text style={styles.modalTitle}>Crear inventario</Text>
-
-            <Text style={styles.modalDescription}>
-              Dale un nombre a tu espacio de trabajo. Podrás organizar aquí tus
-              productos y operaciones.
-            </Text>
-
-            <Text style={styles.inputLabel}>Nombre del inventario</Text>
-
-            <TextInput
-              autoFocus
-              value={newInventoryName}
-              onChangeText={(text) => {
-                setNewInventoryName(text);
-                setCreateError("");
-              }}
-              placeholder="Ej. Papelería Central"
-              placeholderTextColor={theme.muted}
-              style={styles.nameInput}
-              maxLength={60}
-              editable={!creatingInventory}
-              autoCapitalize="sentences"
-              returnKeyType="done"
-              onSubmitEditing={() => void createInventory()}
-            />
-
-            {!!createError && (
-              <Text style={styles.validationError}>{createError}</Text>
-            )}
-
-            <Text style={styles.modalNote}>
-              El inventario quedará guardado en tu cuenta de Sigelt y podrás
-              recuperarlo cuando vuelvas a iniciar sesión.
-            </Text>
-
-            <View style={styles.modalActions}>
-              <Pressable
-                accessibilityRole="button"
-                onPress={closeCreateModal}
-                disabled={creatingInventory}
-                accessibilityState={{ disabled: creatingInventory }}
-                style={styles.cancelButton}
-              >
-                <Text style={styles.cancelButtonText}>Cancelar</Text>
-              </Pressable>
-
-              <Pressable
-                accessibilityRole="button"
-                onPress={() => void createInventory()}
-                disabled={creatingInventory}
-                accessibilityState={{ disabled: creatingInventory }}
-                style={({ pressed }) => [
-                  styles.confirmButton,
-                  (pressed || creatingInventory) && { opacity: 0.75 },
-                ]}
-              >
-                <Text style={styles.confirmButtonText}>
-                  {creatingInventory ? "Guardando..." : "Crear inventario"}
-                </Text>
-
-                <Ionicons
-                  name="arrow-forward-outline"
-                  size={18}
-                  color={theme.darkText}
-                />
-              </Pressable>
-            </View>
-          </View>
-        </KeyboardAvoidingView>
+        </SafeAreaView>
       </Modal>
 
       {/* DETALLE DEL PRODUCTO */}
 
       <Modal
-        visible={selectedProduct !== null}
+        visible={isAdmin && selectedProduct !== null}
         transparent
         animationType="fade"
         onRequestClose={() => setSelectedProduct(null)}
@@ -1512,7 +1117,7 @@ export default function InventarioScreen() {
         </View>
       </Modal>
 
-      {inventory && (
+      {isAdmin && inventory && (
         <>
           <ProductCreateModal
             visible={productModalOpen}
